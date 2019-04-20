@@ -96,14 +96,27 @@ public class HiveCatalog implements ReadableWritableCatalog {
 		return hiveConf;
 	}
 
+//	private static IMetaStoreClient getMetastoreClient(HiveConf hiveConf) {
+//		try {
+//			return RetryingMetaStoreClient.getProxy(
+//				hiveConf,
+//				null,
+//				null,
+//				HiveMetaStoreClient.class.getName(),
+//				true);
+//		} catch (MetaException e) {
+//			throw new FlinkHiveException("Failed to create Hive metastore client", e);
+//		}
+//	}
+
 	private static IMetaStoreClient getMetastoreClient(HiveConf hiveConf) {
 		try {
 			return RetryingMetaStoreClient.getProxy(
 				hiveConf,
 				null,
 				null,
-				HiveMetaStoreClient.class.getName(),
-				true);
+				null,
+				HiveMetaStoreClient.class.getName());
 		} catch (MetaException e) {
 			throw new FlinkHiveException("Failed to create Hive metastore client", e);
 		}

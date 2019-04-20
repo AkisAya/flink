@@ -99,7 +99,7 @@ under the License.
 		<dependency>
 			<groupId>org.apache.hive</groupId>
 			<artifactId>hive-metastore</artifactId>
-			<version>${hive.version}</version>
+			<version>1.2.1</version>
             <exclusions>
                 <exclusion>
                     <artifactId>hadoop-auth</artifactId>

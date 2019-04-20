@@ -45,7 +45,8 @@ public class HiveTableSourceTest {
 		BatchTableEnvironment tEnv = TableEnvironment.getBatchTableEnvironment(env, new TableConfig());
 		tEnv.getConfig().getConf().setInteger(TableConfigOptions.SQL_RESOURCE_SINK_PARALLELISM, 1);
 		tEnv.getConfig().getConf().setInteger(TableConfigOptions.SQL_RESOURCE_DEFAULT_PARALLELISM, 1);
-		tEnv.registerCatalog("myHive", new HiveCatalog("myHive", "thrift://"));
+
+		tEnv.registerCatalog("myHive", new HiveCatalog("myHive", "thrift://m7-common-cdh07:9083"));
 		tEnv.setDefaultDatabase("myHive", "default");
 		tEnv.sqlQuery("select * from products").print();
 	}
