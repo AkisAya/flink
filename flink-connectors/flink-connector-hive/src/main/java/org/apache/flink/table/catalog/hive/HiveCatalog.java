@@ -111,12 +111,7 @@ public class HiveCatalog implements ReadableWritableCatalog {
 
 	private static IMetaStoreClient getMetastoreClient(HiveConf hiveConf) {
 		try {
-			return RetryingMetaStoreClient.getProxy(
-				hiveConf,
-				null,
-				null,
-				null,
-				HiveMetaStoreClient.class.getName());
+			return RetryingMetaStoreClient.getProxy(hiveConf);
 		} catch (MetaException e) {
 			throw new FlinkHiveException("Failed to create Hive metastore client", e);
 		}

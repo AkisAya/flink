@@ -149,11 +149,7 @@ public class HiveTableSource extends PartitionableTableSource implements BatchTa
 			hiveConf.setVar(HiveConf.ConfVars.METASTOREURIS, jobConf.get(HiveConf.ConfVars.METASTOREURIS.varname));
 			IMetaStoreClient client = null;
 			try {
-				client = RetryingMetaStoreClient.getProxy(hiveConf,
-																		null,
-																		null,
-																		null,
-					HiveMetaStoreClient.class.getName());
+				client = RetryingMetaStoreClient.getProxy(hiveConf);
 				List<org.apache.hadoop.hive.metastore.api.Partition> partitions = client.listPartitions(dbName, tableName, (short) -1);
 				for (org.apache.hadoop.hive.metastore.api.Partition partition: partitions){
 					StorageDescriptor sd = partition.getSd();
