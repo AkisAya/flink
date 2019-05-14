@@ -156,12 +156,17 @@ public class HiveTableSource extends PartitionableTableSource implements BatchTa
 					for (int i = 0; i < partitionColNames.length; i++) {
 						partitionColValues.put(partitionColNames[i], partition.getValues().get(i));
 					}
+					Properties properties = createPropertiesFromSdParameters(sd);
+					/**
+					 * 设置 hive 列的类型为原始 hive 的类型
+					 */
+					properties.setProperty(serdeConstants.LIST_COLUMN_TYPES, hiveRowTypeString);
 					allPartitions.add(
 							new HiveTablePartition(sd.getInputFormat(),
 												sd.getOutputFormat(),
 												sd.getSerdeInfo().getSerializationLib(),
 												sd.getLocation(),
-												createPropertiesFromSdParameters(sd),
+												properties,
 												partitionColValues));
 				}
 			} catch (Exception e) {
@@ -176,6 +181,10 @@ public class HiveTableSource extends PartitionableTableSource implements BatchTa
 			StorageDescriptor sd = createStorageDescriptor(jobConf, rowTypeInfo);
 			jobConf.setStrings(INPUT_DIR, sd.getLocation());
 			Properties properties = createPropertiesFromSdParameters(sd);
+			/**
+			 * 设置 hive 列的类型为原始 hive 的类型
+			 */
+			properties.setProperty(serdeConstants.LIST_COLUMN_TYPES, hiveRowTypeString);
 			allPartitions.add(new HiveTablePartition(jobConf.get(HIVE_TABLE_INPUT_FORMAT),
 													jobConf.get(HIVE_TABLE_OUTPUT_FORMAT),
 													jobConf.get(HIVE_TABLE_SERDE_LIBRARY),

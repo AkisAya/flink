@@ -40,7 +40,6 @@ under the License.
 		<module>flink-jdbc</module>
 		<module>flink-hadoop-compatibility</module>
 		<module>flink-hbase</module>
-		<module>flink-hcatalog</module>
 		<module>flink-connector-kafka-base</module>
 		<module>flink-connector-kafka-0.8</module>
 		<module>flink-connector-kafka-0.9</module>
