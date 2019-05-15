@@ -35,7 +35,8 @@ under the License.
 	<packaging>jar</packaging>
 
 	<dependencies>
-		<!-- core dependencies -->
+
+		<!-- Hive metastore dependencies-->
 		<dependency>
 			<groupId>org.apache.hive</groupId>
 			<artifactId>hive-metastore</artifactId>
@@ -48,48 +49,7 @@ under the License.
 			</exclusions>
 		</dependency>
 
-		<dependency>
-			<groupId>org.apache.hive</groupId>
-			<artifactId>hive-exec</artifactId>
-			<version>1.2.1</version>
-			<exclusions>
-				<exclusion>
-					<groupId>com.google.protobuf</groupId>
-					<artifactId>protobuf-java</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.apache.hive</groupId>
-					<artifactId>*</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.apache.zookeeper</groupId>
-					<artifactId>zookeeper</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.datanucleus</groupId>
-					<artifactId>*</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.antlr</groupId>
-					<artifactId>*</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.apache.thrift</groupId>
-					<artifactId>*</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.apache.ivy</groupId>
-					<artifactId>*</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.apache.calcite</groupId>
-					<artifactId>*</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
-
-
-
+		<!-- core dependencies -->
 		<dependency>
 			<groupId>com.alibaba.blink</groupId>
 			<artifactId>flink-core</artifactId>
@@ -104,10 +64,6 @@ under the License.
 			<exclusions>
 				<exclusion>
 					<groupId>com.alibaba.blink</groupId>
-					<artifactId>flink-shaded-hive</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>com.alibaba.flink</groupId>
 					<artifactId>flink-shaded-hive</artifactId>
 				</exclusion>
 				<exclusion>
@@ -142,7 +98,7 @@ under the License.
 			</exclusions>
 		</dependency>
 
-		<!-- Hive metastore dependencies-->
+
 		<dependency>
 			<groupId>com.alibaba.blink</groupId>
 			<artifactId>flink-shaded-hadoop2-uber</artifactId>
