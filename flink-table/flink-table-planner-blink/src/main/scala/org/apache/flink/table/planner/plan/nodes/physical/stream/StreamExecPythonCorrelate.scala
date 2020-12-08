@@ -18,6 +18,7 @@
 package org.apache.flink.table.planner.plan.nodes.physical.stream
 
 import org.apache.flink.api.dag.Transformation
+import org.apache.flink.core.memory.ManagedMemoryUseCase
 import org.apache.flink.table.api.TableException
 import org.apache.flink.table.data.RowData
 import org.apache.flink.table.planner.delegation.StreamPlanner
@@ -77,12 +78,16 @@ class StreamExecPythonCorrelate(
       planner: StreamPlanner): Transformation[RowData] = {
     val inputTransformation = getInputNodes.get(0).translateToPlan(planner)
       .asInstanceOf[Transformation[RowData]]
-    createPythonOneInputTransformation(
+    val ret = createPythonOneInputTransformation(
       inputTransformation,
       scan,
       "StreamExecPythonCorrelate",
       outputRowType,
       getConfig(planner.getExecEnv, planner.getTableConfig),
       joinType)
+    if (isPythonWorkerUsingManagedMemory(planner.getTableConfig.getConfiguration)) {
+      ret.declareManagedMemoryUseCaseAtSlotScope(ManagedMemoryUseCase.PYTHON)
+    }
+    ret
   }
 }

@@ -20,16 +20,17 @@ package org.apache.flink.table.planner.plan.nodes.common
 
 import org.apache.calcite.rex.{RexCall, RexLiteral, RexNode}
 import org.apache.calcite.sql.`type`.SqlTypeName
-import org.apache.flink.configuration.Configuration
+import org.apache.flink.configuration.{ConfigOption, Configuration}
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.table.api.{TableConfig, TableException}
-import org.apache.flink.table.functions.UserDefinedFunction
+import org.apache.flink.table.functions.FunctionDefinition
 import org.apache.flink.table.functions.python.{PythonFunction, PythonFunctionInfo}
+import org.apache.flink.table.planner.functions.bridging.BridgingSqlFunction
 import org.apache.flink.table.planner.functions.utils.{ScalarSqlFunction, TableSqlFunction}
 import org.apache.flink.table.planner.utils.DummyStreamExecutionEnvironment
 
-import scala.collection.mutable
 import scala.collection.JavaConversions._
+import scala.collection.mutable
 
 trait CommonPythonBase {
 
@@ -50,7 +51,8 @@ trait CommonPythonBase {
   private def createPythonFunctionInfo(
       pythonRexCall: RexCall,
       inputNodes: mutable.Map[RexNode, Integer],
-      func: UserDefinedFunction): PythonFunctionInfo = {
+      functionDefinition: FunctionDefinition)
+    : PythonFunctionInfo = {
     val inputs = new mutable.ArrayBuffer[AnyRef]()
     pythonRexCall.getOperands.foreach {
       case pythonRexCall: RexCall =>
@@ -73,7 +75,7 @@ trait CommonPythonBase {
         }
     }
 
-    new PythonFunctionInfo(func.asInstanceOf[PythonFunction], inputs.toArray)
+    new PythonFunctionInfo(functionDefinition.asInstanceOf[PythonFunction], inputs.toArray)
   }
 
   protected def createPythonFunctionInfo(
@@ -84,6 +86,8 @@ trait CommonPythonBase {
         createPythonFunctionInfo(pythonRexCall, inputNodes, sfc.scalarFunction)
       case tfc: TableSqlFunction =>
         createPythonFunctionInfo(pythonRexCall, inputNodes, tfc.udtf)
+      case bsf: BridgingSqlFunction =>
+        createPythonFunctionInfo(pythonRexCall, inputNodes, bsf.getDefinition)
     }
   }
 
@@ -123,6 +127,12 @@ trait CommonPythonBase {
       realEnv = realExecEnvField.get(realEnv).asInstanceOf[StreamExecutionEnvironment]
     }
     realEnv
+  }
+
+  protected def isPythonWorkerUsingManagedMemory(config: Configuration): Boolean = {
+    val clazz = loadClass("org.apache.flink.python.PythonOptions")
+    config.getBoolean(clazz.getField("USE_MANAGED_MEMORY").get(null)
+      .asInstanceOf[ConfigOption[java.lang.Boolean]])
   }
 }
 

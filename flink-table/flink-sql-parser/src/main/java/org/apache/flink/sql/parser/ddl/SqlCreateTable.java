@@ -19,12 +19,11 @@
 package org.apache.flink.sql.parser.ddl;
 
 import org.apache.flink.sql.parser.ExtendedSqlNode;
+import org.apache.flink.sql.parser.ddl.SqlTableColumn.SqlComputedColumn;
+import org.apache.flink.sql.parser.ddl.SqlTableColumn.SqlRegularColumn;
 import org.apache.flink.sql.parser.ddl.constraint.SqlTableConstraint;
 import org.apache.flink.sql.parser.error.SqlValidateException;
-import org.apache.flink.sql.parser.type.ExtendedSqlRowTypeNameSpec;
 
-import org.apache.calcite.sql.SqlBasicCall;
-import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlCharStringLiteral;
 import org.apache.calcite.sql.SqlCreate;
 import org.apache.calcite.sql.SqlDataTypeSpec;
@@ -34,18 +33,17 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSpecialOperator;
-import org.apache.calcite.sql.SqlTypeNameSpec;
 import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.pretty.SqlPrettyWriter;
 import org.apache.calcite.util.ImmutableNullableList;
 
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -78,8 +76,6 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 
 	private final boolean isTemporary;
 
-	private final Set<String> tableConstraintPrimaryKeys;
-
 	public SqlCreateTable(
 			SqlParserPos pos,
 			SqlIdentifier tableName,
@@ -90,8 +86,9 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 			@Nullable SqlWatermark watermark,
 			@Nullable SqlCharStringLiteral comment,
 			@Nullable SqlTableLike tableLike,
-			boolean isTemporary) {
-		super(OPERATOR, pos, false, false);
+			boolean isTemporary,
+			boolean ifNotExists) {
+		super(OPERATOR, pos, false, ifNotExists);
 		this.tableName = requireNonNull(tableName, "tableName should not be null");
 		this.columnList = requireNonNull(columnList, "columnList should not be null");
 		this.tableConstraints = requireNonNull(tableConstraints, "table constraints should not be null");
@@ -101,16 +98,15 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 		this.comment = comment;
 		this.tableLike = tableLike;
 		this.isTemporary = isTemporary;
-		this.tableConstraintPrimaryKeys = getTableConstraintPrimaryKeys(tableConstraints);
 	}
 
 	@Override
-	public SqlOperator getOperator() {
+	public @Nonnull SqlOperator getOperator() {
 		return OPERATOR;
 	}
 
 	@Override
-	public List<SqlNode> getOperandList() {
+	public @Nonnull List<SqlNode> getOperandList() {
 		return ImmutableNullableList.of(tableName,
 				columnList,
 				new SqlNodeList(tableConstraints, SqlParserPos.ZERO),
@@ -163,63 +159,27 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 
 	@Override
 	public void validate() throws SqlValidateException {
-		ColumnValidator validator = new ColumnValidator();
-		for (SqlNode column : columnList) {
-			validator.addColumn(column);
-		}
 
-		// Validate table constraints.
-		boolean pkDefined = false;
-		Set<String> constraintNames = new HashSet<>();
-		for (SqlTableConstraint constraint : getFullConstraints()) {
-			Optional<String> constraintName = constraint.getConstraintName();
-			// Validate constraint name should be unique.
-			if (constraintName.isPresent() && !constraintNames.add(constraintName.get())) {
-				throw new SqlValidateException(constraint.getParserPosition(),
-						String.format("Duplicate definition for constraint [%s]",
-								constraintName.get()));
-			}
-			// Validate primary key definition should be unique.
-			if (constraint.isPrimaryKey()) {
-				if (pkDefined) {
-					throw new SqlValidateException(constraint.getParserPosition(),
-							"Duplicate primary key definition");
-				} else {
-					pkDefined = true;
+		List<SqlTableConstraint> constraints = getFullConstraints().stream()
+			.filter(SqlTableConstraint::isPrimaryKey)
+			.collect(Collectors.toList());
+
+		if (constraints.size() > 1) {
+			throw new SqlValidateException(
+				constraints.get(1).getParserPosition(),
+				"Duplicate primary key definition");
+		} else if (constraints.size() == 1) {
+			Set<String> primaryKeyColumns = Arrays.stream(constraints.get(0).getColumnNames())
+				.collect(Collectors.toSet());
+
+			for (SqlNode column : columnList) {
+				SqlTableColumn tableColumn = (SqlTableColumn) column;
+				if (tableColumn instanceof SqlRegularColumn &&
+						primaryKeyColumns.contains(tableColumn.getName().getSimple())) {
+					SqlRegularColumn regularColumn = (SqlRegularColumn) column;
+					SqlDataTypeSpec notNullType = regularColumn.getType().withNullable(false);
+					regularColumn.setType(notNullType);
 				}
-			}
-			// Validate the key field exists.
-			if (constraint.isTableConstraint()) {
-				for (SqlNode column : constraint.getColumns()) {
-					String columnName = ((SqlIdentifier) column).getSimple();
-					if (!validator.contains(columnName)) {
-						String prefix = constraint.isPrimaryKey() ? "Primary" : "Unique";
-						throw new SqlValidateException(
-								constraint.getParserPosition(),
-								String.format("%s key column [%s] not defined", prefix, columnName));
-					}
-				}
-			}
-		}
-
-		for (SqlNode partitionKeyNode : this.partitionKeyList.getList()) {
-			String partitionKey = ((SqlIdentifier) partitionKeyNode).getSimple();
-			if (!validator.contains(partitionKey)) {
-				throw new SqlValidateException(
-					partitionKeyNode.getParserPosition(),
-					"Partition column [" + partitionKey + "] not defined in columns, at "
-						+ partitionKeyNode.getParserPosition());
-			}
-		}
-
-		if (this.watermark != null) {
-			// SqlIdentifier.toString() returns a qualified identifier string using "." separator
-			String rowtimeField = watermark.getEventTimeColumnName().toString();
-			if (!validator.contains(rowtimeField)) {
-				throw new SqlValidateException(
-					watermark.getEventTimeColumnName().getParserPosition(),
-					"The rowtime attribute field \"" + rowtimeField + "\" is not defined in columns, at " +
-						watermark.getEventTimeColumnName().getParserPosition());
 			}
 		}
 
@@ -228,56 +188,28 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 		}
 	}
 
-	public boolean containsComputedColumn() {
+	public boolean hasRegularColumnsOnly() {
 		for (SqlNode column : columnList) {
-			if (column instanceof SqlBasicCall) {
-				return true;
+			final SqlTableColumn tableColumn = (SqlTableColumn) column;
+			if (!(tableColumn instanceof SqlRegularColumn)) {
+				return false;
 			}
 		}
-		return false;
+		return true;
 	}
 
 	/** Returns the column constraints plus the table constraints. */
 	public List<SqlTableConstraint> getFullConstraints() {
 		List<SqlTableConstraint> ret = new ArrayList<>();
 		this.columnList.forEach(column -> {
-			if (column instanceof SqlTableColumn) {
-				((SqlTableColumn) column).getConstraint()
-						.map(ret::add);
+			SqlTableColumn tableColumn = (SqlTableColumn) column;
+			if (tableColumn instanceof SqlRegularColumn) {
+				SqlRegularColumn regularColumn = (SqlRegularColumn) tableColumn;
+				regularColumn.getConstraint().map(ret::add);
 			}
 		});
 		ret.addAll(this.tableConstraints);
 		return ret;
-	}
-
-	/**
-	 * Decides if the given column is nullable.
-	 *
-	 * <p>Collect primary key fields to fix nullability: primary key implies
-	 * an implicit not null constraint.
-	 */
-	public boolean isColumnNullable(SqlTableColumn column) {
-		boolean isPrimaryKey = column.getConstraint()
-				.map(SqlTableConstraint::isPrimaryKey)
-				.orElse(false);
-		if (isPrimaryKey
-				|| tableConstraintPrimaryKeys.contains(
-						column.getName().getSimple().toUpperCase())) {
-			return false;
-		}
-		return column.getType().getNullable();
-	}
-
-	/** Returns the primary key constraint columns of table constraint. */
-	private Set<String> getTableConstraintPrimaryKeys(List<SqlTableConstraint> constraints) {
-		return constraints.stream().filter(SqlTableConstraint::isPrimaryKey)
-				.findFirst()
-				.map(c -> c.getColumns()
-						.getList()
-						.stream()
-						.map(col -> ((SqlIdentifier) col).getSimple().toUpperCase())
-						.collect(Collectors.toSet()))
-				.orElse(Collections.emptySet());
 	}
 
 	/**
@@ -307,12 +239,13 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 		writer.startList("", "");
 		for (SqlNode column : columnList) {
 			writer.sep(",");
-			if (column instanceof SqlTableColumn) {
-				SqlTableColumn tableColumn = (SqlTableColumn) column;
-				tableColumn.getName().unparse(writer, 0, 0);
-			} else {
-				column.unparse(writer, 0, 0);
+			SqlTableColumn tableColumn = (SqlTableColumn) column;
+			if (tableColumn instanceof SqlComputedColumn) {
+				SqlComputedColumn computedColumn = (SqlComputedColumn) tableColumn;
+				computedColumn.getExpr().unparse(writer, 0, 0);
+				writer.keyword("AS");
 			}
+			tableColumn.getName().unparse(writer, 0, 0);
 		}
 
 		return writer.toString();
@@ -328,34 +261,30 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 			writer.keyword("TEMPORARY");
 		}
 		writer.keyword("TABLE");
+		if (isIfNotExists()) {
+			writer.keyword("IF NOT EXISTS");
+		}
 		tableName.unparse(writer, leftPrec, rightPrec);
-		SqlWriter.Frame frame = writer.startList(SqlWriter.FrameTypeEnum.create("sds"), "(", ")");
-		for (SqlNode column : columnList) {
-			printIndent(writer);
-			if (column instanceof SqlBasicCall) {
-				SqlCall call = (SqlCall) column;
-				SqlCall newCall = call.getOperator().createCall(
-					SqlParserPos.ZERO,
-					call.operand(1),
-					call.operand(0));
-				newCall.unparse(writer, leftPrec, rightPrec);
-			} else {
+		if (columnList.size() > 0) {
+			SqlWriter.Frame frame = writer.startList(SqlWriter.FrameTypeEnum.create("sds"), "(", ")");
+			for (SqlNode column : columnList) {
+				printIndent(writer);
 				column.unparse(writer, leftPrec, rightPrec);
 			}
-		}
-		if (tableConstraints.size() > 0) {
-			for (SqlTableConstraint constraint : tableConstraints) {
-				printIndent(writer);
-				constraint.unparse(writer, leftPrec, rightPrec);
+			if (tableConstraints.size() > 0) {
+				for (SqlTableConstraint constraint : tableConstraints) {
+					printIndent(writer);
+					constraint.unparse(writer, leftPrec, rightPrec);
+				}
 			}
-		}
-		if (watermark != null) {
-			printIndent(writer);
-			watermark.unparse(writer, leftPrec, rightPrec);
-		}
+			if (watermark != null) {
+				printIndent(writer);
+				watermark.unparse(writer, leftPrec, rightPrec);
+			}
 
-		writer.newlineAndIndent();
-		writer.endList(frame);
+			writer.newlineAndIndent();
+			writer.endList(frame);
+		}
 
 		if (comment != null) {
 			writer.newlineAndIndent();
@@ -389,7 +318,7 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 		}
 	}
 
-	private void printIndent(SqlWriter writer) {
+	protected void printIndent(SqlWriter writer) {
 		writer.sep(",", false);
 		writer.newlineAndIndent();
 		writer.print("  ");
@@ -408,60 +337,4 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 		return tableName.names.toArray(new String[0]);
 	}
 
-	// -------------------------------------------------------------------------------------
-
-	private static final class ColumnValidator {
-
-		private final Set<String> allColumnNames = new HashSet<>();
-
-		/**
-		 * Adds column name to the registered column set. This will add nested column names recursive.
-		 * Nested column names are qualified using "." separator.
-		 */
-		public void addColumn(SqlNode column) throws SqlValidateException {
-			String columnName;
-			if (column instanceof SqlTableColumn) {
-				SqlTableColumn tableColumn = (SqlTableColumn) column;
-				columnName = tableColumn.getName().getSimple();
-				addNestedColumn(columnName, tableColumn.getType());
-			} else if (column instanceof SqlBasicCall) {
-				SqlBasicCall tableColumn = (SqlBasicCall) column;
-				columnName = tableColumn.getOperands()[1].toString();
-			} else {
-				throw new UnsupportedOperationException("Unsupported column:" + column);
-			}
-
-			addColumnName(columnName, column.getParserPosition());
-		}
-
-		/**
-		 * Returns true if the column name is existed in the registered column set.
-		 * This supports qualified column name using "." separator.
-		 */
-		public boolean contains(String columnName) {
-			return allColumnNames.contains(columnName);
-		}
-
-		private void addNestedColumn(String columnName, SqlDataTypeSpec columnType) throws SqlValidateException {
-			SqlTypeNameSpec typeName = columnType.getTypeNameSpec();
-			// validate composite type
-			if (typeName instanceof ExtendedSqlRowTypeNameSpec) {
-				ExtendedSqlRowTypeNameSpec rowType = (ExtendedSqlRowTypeNameSpec) typeName;
-				for (int i = 0; i < rowType.getFieldNames().size(); i++) {
-					SqlIdentifier fieldName = rowType.getFieldNames().get(i);
-					String fullName = columnName + "." + fieldName;
-					addColumnName(fullName, fieldName.getParserPosition());
-					SqlDataTypeSpec fieldType = rowType.getFieldTypes().get(i);
-					addNestedColumn(fullName, fieldType);
-				}
-			}
-		}
-
-		private void addColumnName(String columnName, SqlParserPos pos) throws SqlValidateException {
-			if (!allColumnNames.add(columnName)) {
-				throw new SqlValidateException(pos,
-					"Duplicate column name [" + columnName + "], at " + pos);
-			}
-		}
-	}
 }

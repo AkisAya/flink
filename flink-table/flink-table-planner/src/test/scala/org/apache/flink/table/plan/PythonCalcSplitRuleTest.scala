@@ -19,10 +19,11 @@
 package org.apache.flink.table.plan
 
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.runtime.utils.JavaUserDefinedScalarFunctions.{BooleanPandasScalarFunction, BooleanPythonScalarFunction, PandasScalarFunction, PythonScalarFunction}
-import org.apache.flink.table.utils.TableTestUtil.{term, _}
 import org.apache.flink.table.utils.TableTestBase
+import org.apache.flink.table.utils.TableTestUtil._
+
 import org.junit.Test
 
 class PythonCalcSplitRuleTest extends TableTestBase {
@@ -577,6 +578,30 @@ class PythonCalcSplitRuleTest extends TableTestBase {
         term("select", "a", "b", "pyFunc1(a, pyFunc1(b, f0)) AS f0")
       ),
       term("select", "a", "f0 AS _c1", "b")
+    )
+
+    util.verifyTable(resultTable, expected)
+  }
+
+  @Test
+  def testPythonFunctionWithCompositeInputsAndWhereClause(): Unit = {
+    val util = streamTestUtil()
+    val table = util.addTable[(Int, Int, (Int, Int))]("MyTable", 'a, 'b, 'c)
+    util.tableEnv.registerFunction("pyFunc1", new PythonScalarFunction("pyFunc1"))
+
+    val resultTable = table.select('a, 'b, 'c.flatten())
+      .select($"a", call("pyFunc1", $"b", $"c$$_1"))
+      .where($"a".plus(lit(1)).isGreater(lit(0)))
+
+    val expected = unaryNode(
+      "DataStreamPythonCalc",
+      unaryNode(
+        "DataStreamCalc",
+        streamTableNode(table),
+        term("select", "a", "b", "c._1 AS f0"),
+        term("where", ">(+(a, 1), 0)")
+      ),
+      term("select", "a", "pyFunc1(b, f0) AS _c1")
     )
 
     util.verifyTable(resultTable, expected)

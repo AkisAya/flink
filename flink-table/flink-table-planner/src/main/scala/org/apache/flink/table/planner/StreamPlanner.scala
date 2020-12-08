@@ -17,6 +17,7 @@
  */
 
 package org.apache.flink.table.planner
+
 import org.apache.flink.annotation.VisibleForTesting
 import org.apache.flink.api.dag.Transformation
 import org.apache.flink.streaming.api.datastream.DataStream
@@ -161,7 +162,7 @@ class StreamPlanner(
     val jsonSqlPlan = env.getExecutionPlan
     val sqlPlan = PlanJsonParser.getSqlExecutionPlan(jsonSqlPlan, false)
 
-    s"== Abstract Syntax Tree ==" +
+    val explanation = s"== Abstract Syntax Tree ==" +
       System.lineSeparator +
       s"$astPlan" +
       System.lineSeparator +
@@ -170,8 +171,15 @@ class StreamPlanner(
       s"$optimizedPlan" +
       System.lineSeparator +
       s"== Physical Execution Plan ==" +
-      System.lineSeparator +
+      System.lineSeparator
+
+    if (extraDetails.contains(ExplainDetail.JSON_EXECUTION_PLAN)) {
+      s"$explanation" +
+      s"$jsonSqlPlan"
+    } else {
+      s"$explanation" +
       s"$sqlPlan"
+    }
   }
 
   override def getCompletionHints(
@@ -186,6 +194,11 @@ class StreamPlanner(
     modifyOperation match {
       case s: UnregisteredSinkModifyOperation[_] =>
         writeToSink(s.getChild, s.getSink, "UnregisteredSink")
+
+      case s: SelectSinkOperation =>
+        val sink = new StreamSelectTableSink(s.getChild.getTableSchema)
+        s.setSelectResultProvider(sink.getSelectResultProvider)
+        writeToSink(s.getChild, sink, "collect")
 
       case catalogSink: CatalogSinkModifyOperation =>
         getTableSink(catalogSink.getTableIdentifier)
@@ -309,7 +322,8 @@ class StreamPlanner(
   }
 
   private def getTableSink(objectIdentifier: ObjectIdentifier): Option[TableSink[_]] = {
-    JavaScalaConversionUtil.toScala(catalogManager.getTable(objectIdentifier))
+    val lookupResult = JavaScalaConversionUtil.toScala(catalogManager.getTable(objectIdentifier))
+    lookupResult
       .map(_.getTable) match {
       case Some(s) if s.isInstanceOf[ConnectorCatalogTable[_, _]] =>
         JavaScalaConversionUtil.toScala(s.asInstanceOf[ConnectorCatalogTable[_, _]].getTableSink)
@@ -318,7 +332,8 @@ class StreamPlanner(
         val catalog = catalogManager.getCatalog(objectIdentifier.getCatalogName)
         val catalogTable = s.asInstanceOf[CatalogTable]
         val context = new TableSinkFactoryContextImpl(
-          objectIdentifier, catalogTable, config.getConfiguration, false)
+          objectIdentifier, catalogTable, config.getConfiguration, false,
+          lookupResult.get.isTemporary)
         if (catalog.isPresent && catalog.get().getTableFactory.isPresent) {
           val sink = TableFactoryUtil.createTableSinkForCatalogTable(catalog.get(), context)
           if (sink.isPresent) {

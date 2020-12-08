@@ -24,18 +24,13 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.table.data.RowData
 import org.apache.flink.table.planner.delegation.StreamPlanner
 import org.apache.flink.table.planner.plan.nodes.common.CommonPhysicalTableSourceScan
-import org.apache.flink.table.planner.plan.nodes.exec.{ExecNode, StreamExecNode}
+import org.apache.flink.table.planner.plan.nodes.exec.StreamExecNode
 import org.apache.flink.table.planner.plan.schema.TableSourceTable
-import org.apache.flink.table.runtime.typeutils.RowDataTypeInfo
-import org.apache.flink.table.sources.StreamTableSource
+import org.apache.flink.table.runtime.typeutils.InternalTypeInfo
 
 import org.apache.calcite.plan._
 import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.metadata.RelMetadataQuery
-
-import java.util
-
-import scala.collection.JavaConversions._
 
 /**
   * Stream physical RelNode to read data from an external source defined by a
@@ -63,23 +58,13 @@ class StreamExecTableSourceScan(
 
   //~ ExecNode methods -----------------------------------------------------------
 
-  override def getInputNodes: util.List[ExecNode[StreamPlanner, _]] = {
-    getInputs.map(_.asInstanceOf[ExecNode[StreamPlanner, _]])
-  }
-
-  override def replaceInputNode(
-      ordinalInParent: Int,
-      newInputNode: ExecNode[StreamPlanner, _]): Unit = {
-    replaceInput(ordinalInParent, newInputNode.asInstanceOf[RelNode])
-  }
-
   override protected def createInputFormatTransformation(
       env: StreamExecutionEnvironment,
       inputFormat: InputFormat[RowData, _],
       name: String,
-      outTypeInfo: RowDataTypeInfo): Transformation[RowData] = {
+      outTypeInfo: InternalTypeInfo[RowData]): Transformation[RowData] = {
     // It's better to use StreamExecutionEnvironment.createInput()
-    // rather than addSource() for streaming, because it take care of checkpoint.
+    // rather than addLegacySource() for streaming, because it take care of checkpoint.
     env
       .createInput(inputFormat, outTypeInfo)
       .name(name)

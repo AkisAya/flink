@@ -24,31 +24,47 @@ import org.apache.flink.util.FlinkRuntimeException;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 public class MockOperatorCoordinatorContext implements OperatorCoordinator.Context {
 	private final OperatorID operatorID;
+	private final ClassLoader userCodeClassLoader;
 	private final int numSubtasks;
 	private final boolean failEventSending;
 
 	private final Map<Integer, List<OperatorEvent>> eventsToOperator;
-	private final LinkedHashMap<Integer, Throwable> failedTasks;
 	private boolean jobFailed;
+	private Throwable jobFailureReason;
 
 	public MockOperatorCoordinatorContext(OperatorID operatorID, int numSubtasks) {
 		this(operatorID, numSubtasks, true);
 	}
 
-	public MockOperatorCoordinatorContext(OperatorID operatorID, int numSubtasks, boolean failEventSending) {
+	public MockOperatorCoordinatorContext(
+			OperatorID operatorID,
+			int numSubtasks,
+			boolean failEventSending) {
+		this(operatorID, numSubtasks, failEventSending, MockOperatorCoordinatorContext.class.getClassLoader());
+	}
+
+	public MockOperatorCoordinatorContext(OperatorID operatorID, ClassLoader userCodeClassLoader) {
+		this(operatorID, 1, true, userCodeClassLoader);
+	}
+
+	public MockOperatorCoordinatorContext(
+			OperatorID operatorID,
+			int numSubtasks,
+			boolean failEventSending,
+			ClassLoader userCodeClassLoader) {
 		this.operatorID = operatorID;
 		this.numSubtasks = numSubtasks;
 		this.eventsToOperator = new HashMap<>();
-		this.failedTasks = new LinkedHashMap<>();
 		this.jobFailed = false;
+		this.jobFailureReason = null;
 		this.failEventSending = failEventSending;
+		this.userCodeClassLoader = userCodeClassLoader;
 	}
 
 	@Override
@@ -71,18 +87,19 @@ public class MockOperatorCoordinatorContext implements OperatorCoordinator.Conte
 	}
 
 	@Override
-	public void failTask(int subtask, Throwable cause) {
-		failedTasks.put(subtask, cause);
-	}
-
-	@Override
 	public void failJob(Throwable cause) {
 		jobFailed = true;
+		jobFailureReason = cause;
 	}
 
 	@Override
 	public int currentParallelism() {
 		return numSubtasks;
+	}
+
+	@Override
+	public ClassLoader getUserCodeClassloader() {
+		return userCodeClassLoader;
 	}
 
 	// -------------------------------
@@ -95,11 +112,11 @@ public class MockOperatorCoordinatorContext implements OperatorCoordinator.Conte
 		return eventsToOperator;
 	}
 
-	public LinkedHashMap<Integer, Throwable> getFailedTasks() {
-		return failedTasks;
-	}
-
 	public boolean isJobFailed() {
 		return jobFailed;
+	}
+
+	public Throwable getJobFailureReason() {
+		return jobFailureReason;
 	}
 }

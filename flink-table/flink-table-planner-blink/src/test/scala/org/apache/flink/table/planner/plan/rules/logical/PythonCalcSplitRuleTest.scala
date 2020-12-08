@@ -18,14 +18,15 @@
 
 package org.apache.flink.table.planner.plan.rules.logical
 
-import org.apache.calcite.plan.hep.HepMatchOrder
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.planner.plan.nodes.FlinkConventions
 import org.apache.flink.table.planner.plan.optimize.program._
 import org.apache.flink.table.planner.plan.rules.{FlinkBatchRuleSets, FlinkStreamRuleSets}
 import org.apache.flink.table.planner.runtime.utils.JavaUserDefinedScalarFunctions.{BooleanPandasScalarFunction, BooleanPythonScalarFunction, PandasScalarFunction, PythonScalarFunction}
 import org.apache.flink.table.planner.utils.TableTestBase
+
+import org.apache.calcite.plan.hep.HepMatchOrder
 import org.junit.{Before, Test}
 
 /**
@@ -182,6 +183,12 @@ class PythonCalcSplitRuleTest extends TableTestBase {
   @Test
   def testPythonFunctionWithCompositeInputs(): Unit = {
     val sqlQuery = "SELECT a, pyFunc1(b, d._1) FROM MyTable"
+    util.verifyPlan(sqlQuery)
+  }
+
+  @Test
+  def testPythonFunctionWithCompositeInputsAndWhereClause(): Unit = {
+    val sqlQuery = "SELECT a, pyFunc1(b, d._1) FROM MyTable WHERE a + 1 > 0"
     util.verifyPlan(sqlQuery)
   }
 

@@ -26,10 +26,15 @@ import org.apache.flink.table.api.WatermarkSpec;
 import org.apache.flink.table.api.constraints.UniqueConstraint;
 import org.apache.flink.table.sinks.TableSink;
 import org.apache.flink.table.sources.TableSource;
+import org.apache.flink.table.types.FieldsDataType;
+import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.types.utils.DataTypeUtils;
 import org.apache.flink.util.Preconditions;
 
 import java.util.List;
 import java.util.Optional;
+
+import static org.apache.flink.util.Preconditions.checkArgument;
 
 /**
  * Utilities to {@link TableSchema}.
@@ -39,42 +44,85 @@ public class TableSchemaUtils {
 
 	/**
 	 * Return {@link TableSchema} which consists of all physical columns. That means, the computed
-	 * columns are filtered out.
+	 * columns and metadata columns are filtered out.
 	 *
 	 * <p>Readers(or writers) such as {@link TableSource} and {@link TableSink} should use this physical
 	 * schema to generate {@link TableSource#getProducedDataType()} and {@link TableSource#getTableSchema()}
-	 * rather than using the raw TableSchema which may contains computed columns.
+	 * rather than using the raw TableSchema which may contains additional columns.
 	 */
 	public static TableSchema getPhysicalSchema(TableSchema tableSchema) {
 		Preconditions.checkNotNull(tableSchema);
 		TableSchema.Builder builder = new TableSchema.Builder();
 		tableSchema.getTableColumns().forEach(
 			tableColumn -> {
-				if (!tableColumn.isGenerated()) {
+				if (tableColumn.isPhysical()) {
 					builder.field(tableColumn.getName(), tableColumn.getType());
 				}
 			});
+		tableSchema.getPrimaryKey().ifPresent(
+			uniqueConstraint -> builder.primaryKey(
+				uniqueConstraint.getName(),
+				uniqueConstraint.getColumns().toArray(new String[0]))
+		);
 		return builder.build();
 	}
 
 	/**
-	 * Returns true if there are any generated columns in the given {@link TableColumn}.
+	 * Creates a new {@link TableSchema} with the projected fields from another {@link TableSchema}.
+	 * The new {@link TableSchema} doesn't contain any primary key or watermark information.
+	 *
+	 * <p>When extracting the fields from the origin schema, the fields may get name conflicts in the
+	 * new schema. Considering that the path to the fields is unique in schema, use the path as the
+	 * new name to resolve the name conflicts in the new schema. If name conflicts still exists, it
+	 * will add postfix in the fashion "_$%d" to resolve.
+	 *
+	 * @see org.apache.flink.table.connector.source.abilities.SupportsProjectionPushDown
 	 */
-	public static boolean containsGeneratedColumns(TableSchema schema) {
-		Preconditions.checkNotNull(schema);
-		return schema.getTableColumns().stream().anyMatch(TableColumn::isGenerated);
+	public static TableSchema projectSchema(TableSchema tableSchema, int[][] projectedFields) {
+		checkArgument(containsPhysicalColumnsOnly(tableSchema), "Projection is only supported for physical columns.");
+		TableSchema.Builder builder = TableSchema.builder();
+
+		FieldsDataType fields = (FieldsDataType) DataTypeUtils.projectRow(tableSchema.toRowDataType(), projectedFields);
+		RowType topFields = (RowType) fields.getLogicalType();
+		for (int i = 0; i < topFields.getFieldCount(); i++) {
+			builder.field(topFields.getFieldNames().get(i), fields.getChildren().get(i));
+		}
+		return builder.build();
 	}
 
 	/**
-	 * Throws exception if the given {@link TableSchema} contains any generated columns.
+	 * Returns true if there are only physical columns in the given {@link TableSchema}.
 	 */
-	public static TableSchema checkNoGeneratedColumns(TableSchema schema) {
+	public static boolean containsPhysicalColumnsOnly(TableSchema schema) {
 		Preconditions.checkNotNull(schema);
-		if (containsGeneratedColumns(schema)) {
+		return schema.getTableColumns().stream().allMatch(TableColumn::isPhysical);
+	}
+
+	/**
+	 * Throws an exception if the given {@link TableSchema} contains any non-physical columns.
+	 */
+	public static TableSchema checkOnlyPhysicalColumns(TableSchema schema) {
+		Preconditions.checkNotNull(schema);
+		if (!containsPhysicalColumnsOnly(schema)) {
 			throw new ValidationException(
-				"The given schema contains generated columns, schema: " + schema.toString());
+				"The given schema contains non-physical columns, schema: \n" + schema.toString());
 		}
 		return schema;
+	}
+
+	/**
+	 * Returns the field indices of primary key in the physical columns of
+	 * this schema (not include computed columns or metadata columns).
+	 */
+	public static int[] getPrimaryKeyIndices(TableSchema schema) {
+		if (schema.getPrimaryKey().isPresent()) {
+			List<String> fieldNames = DataTypeUtils.flattenToNames(schema.toPhysicalRowDataType());
+			return schema.getPrimaryKey().get().getColumns().stream()
+				.mapToInt(fieldNames::indexOf)
+				.toArray();
+		} else {
+			return new int[0];
+		}
 	}
 
 	/**
@@ -122,14 +170,10 @@ public class TableSchemaUtils {
 	}
 
 	/** Returns the builder with copied columns info from the given table schema. */
-	private static TableSchema.Builder builderWithGivenColumns(List<TableColumn> oriColumns) {
-		TableSchema.Builder builder = TableSchema.builder();
-		for (TableColumn column : oriColumns) {
-			if (column.isGenerated()) {
-				builder.field(column.getName(), column.getType(), column.getExpr().get());
-			} else {
-				builder.field(column.getName(), column.getType());
-			}
+	private static TableSchema.Builder builderWithGivenColumns(List<TableColumn> originalColumns) {
+		final TableSchema.Builder builder = TableSchema.builder();
+		for (TableColumn column : originalColumns) {
+			builder.add(column);
 		}
 		return builder;
 	}

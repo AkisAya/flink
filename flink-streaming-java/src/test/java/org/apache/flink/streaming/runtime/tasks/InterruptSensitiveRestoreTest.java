@@ -38,6 +38,7 @@ import org.apache.flink.runtime.execution.librarycache.TestingClassLoaderLease;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.executiongraph.JobInformation;
 import org.apache.flink.runtime.executiongraph.TaskInformation;
+import org.apache.flink.runtime.externalresource.ExternalResourceInfoProvider;
 import org.apache.flink.runtime.filecache.FileCache;
 import org.apache.flink.runtime.io.disk.iomanager.IOManager;
 import org.apache.flink.runtime.io.network.NettyShuffleEnvironmentBuilder;
@@ -87,6 +88,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Executor;
 
 import static org.junit.Assert.assertEquals;
@@ -216,11 +218,12 @@ public class InterruptSensitiveRestoreTest {
 				throw new IllegalArgumentException();
 		}
 
-		OperatorSubtaskState operatorSubtaskState = new OperatorSubtaskState(
-			new StateObjectCollection<>(operatorStateBackend),
-			new StateObjectCollection<>(operatorStateStream),
-			new StateObjectCollection<>(keyedStateFromBackend),
-			new StateObjectCollection<>(keyedStateFromStream));
+		OperatorSubtaskState operatorSubtaskState = OperatorSubtaskState.builder()
+			.setManagedOperatorState(new StateObjectCollection<>(operatorStateBackend))
+			.setRawOperatorState(new StateObjectCollection<>(operatorStateStream))
+			.setManagedKeyedState(new StateObjectCollection<>(keyedStateFromBackend))
+			.setRawKeyedState(new StateObjectCollection<>(keyedStateFromStream))
+			.build();
 
 		JobVertexID jobVertexID = new JobVertexID();
 		OperatorID operatorID = OperatorID.fromJobVertexID(jobVertexID);
@@ -269,6 +272,7 @@ public class InterruptSensitiveRestoreTest {
 			new KvStateService(new KvStateRegistry(), null, null),
 			mock(BroadcastVariableManager.class),
 			new TaskEventDispatcher(),
+			ExternalResourceInfoProvider.NO_EXTERNAL_RESOURCES,
 			taskStateManager,
 			mock(TaskManagerActions.class),
 			mock(InputSplitProvider.class),
@@ -324,6 +328,11 @@ public class InterruptSensitiveRestoreTest {
 			};
 
 			return is;
+		}
+
+		@Override
+		public Optional<byte[]> asBytesIfInMemory() {
+			return Optional.empty();
 		}
 
 		private void block() {

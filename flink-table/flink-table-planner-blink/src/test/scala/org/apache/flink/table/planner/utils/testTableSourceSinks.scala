@@ -32,7 +32,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.table.api.{DataTypes, TableEnvironment, TableSchema}
 import org.apache.flink.table.catalog.{CatalogPartitionImpl, CatalogPartitionSpec, CatalogTableImpl, ObjectPath}
 import org.apache.flink.table.descriptors.ConnectorDescriptorValidator.{CONNECTOR, CONNECTOR_TYPE}
-import org.apache.flink.table.descriptors.{CustomConnectorDescriptor, DescriptorProperties, FileSystem, OldCsv, Schema}
+import org.apache.flink.table.descriptors.{CustomConnectorDescriptor, DescriptorProperties, FileSystem, OldCsv, Schema, SchemaValidator}
 import org.apache.flink.table.expressions.ApiExpressionUtils.unresolvedCall
 import org.apache.flink.table.expressions.{CallExpression, Expression, FieldReferenceExpression, ValueLiteralExpression}
 import org.apache.flink.table.factories.{StreamTableSourceFactory, TableSinkFactory, TableSourceFactory}
@@ -48,7 +48,8 @@ import org.apache.flink.table.sources._
 import org.apache.flink.table.sources.tsextractors.ExistingField
 import org.apache.flink.table.sources.wmstrategies.{AscendingTimestamps, PreserveWatermarks}
 import org.apache.flink.table.types.DataType
-import org.apache.flink.table.utils.{EncodingUtils, TableSchemaUtils}
+import org.apache.flink.table.utils.TableSchemaUtils.getPhysicalSchema
+import org.apache.flink.table.utils.{EncodingUtils}
 import org.apache.flink.types.Row
 
 import _root_.java.io.{File, FileOutputStream, OutputStreamWriter}
@@ -239,6 +240,67 @@ class TestTableSourceWithTime[T](
   }
 }
 
+class TestTableSourceWithTimeFactory[T] extends StreamTableSourceFactory[T] {
+  override def createStreamTableSource(properties: JMap[String, String]): StreamTableSource[T] = {
+    val dp = new DescriptorProperties()
+    dp.putProperties(properties)
+
+    val isBounded = dp.getOptionalBoolean("is-bounded").orElse(false)
+    val tableSchema = dp.getTableSchema(Schema.SCHEMA)
+    val serializedData = dp.getOptionalString("data").orElse(null)
+    val data = if (serializedData != null) {
+      EncodingUtils.decodeStringToObject(serializedData, classOf[List[T]])
+    } else {
+      Seq.empty[T]
+    }
+    val rowtimeAttributes = SchemaValidator.deriveRowtimeAttributes(dp)
+    val rowtime = if (rowtimeAttributes.isEmpty) {
+      null
+    } else {
+      rowtimeAttributes.head.getAttributeName
+    }
+    val proctimeAttribute = SchemaValidator.deriveProctimeAttribute(dp)
+    val proctime = if (proctimeAttribute.isPresent) {
+      proctimeAttribute.get()
+    } else {
+      null
+    }
+
+    val serializedMapKeys = dp.getOptionalString("map-keys").orElse(null)
+    val serializedMapVals = dp.getOptionalString("map-vals").orElse(null)
+    val mapping = if (serializedMapKeys != null && serializedMapVals != null) {
+      val mapKeys = EncodingUtils.decodeStringToObject(serializedMapKeys, classOf[List[String]])
+      val mapVals = EncodingUtils.decodeStringToObject(serializedMapVals, classOf[List[String]])
+      if (mapKeys.length != mapVals.length) {
+        null
+      } else {
+        mapKeys.zip(mapVals).toMap
+      }
+    } else {
+      null
+    }
+
+    val existingTs = dp.getOptionalString("existingTs").orElse(null)
+
+    val returnType = tableSchema.toRowType.asInstanceOf[TypeInformation[T]]
+
+    new TestTableSourceWithTime[T](
+      isBounded, tableSchema, returnType, data, rowtime, proctime, mapping, existingTs)
+  }
+
+  override def requiredContext(): JMap[String, String] = {
+    val context = new util.HashMap[String, String]()
+    context.put(CONNECTOR_TYPE, "TestTableSourceWithTime")
+    context
+  }
+
+  override def supportedProperties(): JList[String] = {
+    val properties = new util.LinkedList[String]()
+    properties.add("*")
+    properties
+  }
+}
+
 class TestPreserveWMTableSource[T](
     tableSchema: TableSchema,
     returnType: TypeInformation[T],
@@ -267,7 +329,7 @@ class TestPreserveWMTableSource[T](
 
 }
 
-class TestProjectableTableSource(
+class TestLegacyProjectableTableSource(
     isBounded: Boolean,
     tableSchema: TableSchema,
     returnType: TypeInformation[Row],
@@ -314,7 +376,7 @@ class TestProjectableTableSource(
       pRow
     }
 
-    new TestProjectableTableSource(
+    new TestLegacyProjectableTableSource(
       isBounded,
       tableSchema,
       projectedReturnType,
@@ -388,22 +450,16 @@ class TestNestedProjectableTableSource(
   }
 }
 
-/** Table source factory to find and create [[TestProjectableTableSource]]. */
-class TestProjectableTableSourceFactory extends StreamTableSourceFactory[Row] {
+/** Table source factory to find and create [[TestLegacyProjectableTableSource]]. */
+class TestLegacyProjectableTableSourceFactory extends StreamTableSourceFactory[Row] {
   override def createStreamTableSource(properties: JMap[String, String])
   : StreamTableSource[Row] = {
     val descriptorProps = new DescriptorProperties()
     descriptorProps.putProperties(properties)
     val isBounded = descriptorProps.getBoolean("is-bounded")
     val tableSchema = descriptorProps.getTableSchema(Schema.SCHEMA)
-    // Build physical row type.
-    val schemaBuilder = TableSchema.builder()
-    tableSchema
-      .getTableColumns
-      .filter(c => !c.isGenerated)
-      .foreach(c => schemaBuilder.field(c.getName, c.getType))
-    val rowTypeInfo = schemaBuilder.build().toRowType
-    new TestProjectableTableSource(isBounded, tableSchema, rowTypeInfo, Seq())
+    val rowTypeInfo = getPhysicalSchema(tableSchema).toRowType
+    new TestLegacyProjectableTableSource(isBounded, tableSchema, rowTypeInfo, Seq())
   }
 
   override def requiredContext(): JMap[String, String] = {
@@ -433,7 +489,7 @@ class TestProjectableTableSourceFactory extends StreamTableSourceFactory[Row] {
   * @param filterPredicates The predicates that should be used to filter.
   * @param filterPushedDown Whether predicates have been pushed down yet.
   */
-class TestFilterableTableSource(
+class TestLegacyFilterableTableSource(
     override val isBounded: Boolean,
     schema: TableSchema,
     data: Seq[Row],
@@ -472,7 +528,7 @@ class TestFilterableTableSource(
       }
     }
 
-    new TestFilterableTableSource(
+    new TestLegacyFilterableTableSource(
       isBounded,
       schema,
       data,
@@ -570,7 +626,7 @@ class TestFilterableTableSource(
   override def getTableSchema: TableSchema = schema
 }
 
-object TestFilterableTableSource {
+object TestLegacyFilterableTableSource {
   val defaultFilterableFields = Set("amount")
 
   val defaultSchema: TableSchema = TableSchema.builder()
@@ -617,8 +673,8 @@ object TestFilterableTableSource {
   }
 }
 
-/** Table source factory to find and create [[TestFilterableTableSource]]. */
-class TestFilterableTableSourceFactory extends StreamTableSourceFactory[Row] {
+/** Table source factory to find and create [[TestLegacyFilterableTableSource]]. */
+class TestLegacyFilterableTableSourceFactory extends StreamTableSourceFactory[Row] {
   override def createStreamTableSource(properties: JMap[String, String])
     : StreamTableSource[Row] = {
     val descriptorProps = new DescriptorProperties()
@@ -629,16 +685,16 @@ class TestFilterableTableSourceFactory extends StreamTableSourceFactory[Row] {
     val rows = if (serializedRows != null) {
       EncodingUtils.decodeStringToObject(serializedRows, classOf[List[Row]])
     } else {
-      TestFilterableTableSource.defaultRows
+      TestLegacyFilterableTableSource.defaultRows
     }
     val serializedFilterableFields =
       descriptorProps.getOptionalString("filterable-fields").orElse(null)
     val filterableFields = if (serializedFilterableFields != null) {
       EncodingUtils.decodeStringToObject(serializedFilterableFields, classOf[List[String]]).toSet
     } else {
-      TestFilterableTableSource.defaultFilterableFields
+      TestLegacyFilterableTableSource.defaultFilterableFields
     }
-    new TestFilterableTableSource(isBounded, schema, rows, filterableFields)
+    new TestLegacyFilterableTableSource(isBounded, schema, rows, filterableFields)
   }
 
   override def requiredContext(): JMap[String, String] = {
@@ -737,7 +793,7 @@ class TestDataTypeTableSourceFactory extends TableSourceFactory[Row] {
   override def createTableSource(properties: JMap[String, String]): TableSource[Row] = {
     val descriptorProperties = new DescriptorProperties
     descriptorProperties.putProperties(properties)
-    val tableSchema = TableSchemaUtils.getPhysicalSchema(
+    val tableSchema = getPhysicalSchema(
       descriptorProperties.getTableSchema(Schema.SCHEMA))
     val serializedRows = descriptorProperties.getOptionalString("data").orElse(null)
     val data = if (serializedRows != null) {
@@ -816,7 +872,7 @@ class TestDataTypeTableSourceWithTimeFactory extends TableSourceFactory[Row] {
   override def createTableSource(properties: JMap[String, String]): TableSource[Row] = {
     val descriptorProperties = new DescriptorProperties
     descriptorProperties.putProperties(properties)
-    val tableSchema = TableSchemaUtils.getPhysicalSchema(
+    val tableSchema = getPhysicalSchema(
       descriptorProperties.getTableSchema(Schema.SCHEMA))
 
     val serializedRows = descriptorProperties.getOptionalString("data").orElse(null)
@@ -1253,7 +1309,7 @@ class OptionsTableSource(
   override def explainSource(): String = s"${classOf[OptionsTableSource].getSimpleName}" +
     s"(props=$props)"
 
-  override def getTableSchema: TableSchema = TableSchemaUtils.getPhysicalSchema(tableSchema)
+  override def getTableSchema: TableSchema = getPhysicalSchema(tableSchema)
 
   override def getDataStream(execEnv: StreamExecutionEnvironment): DataStream[Row] =
     None.asInstanceOf[DataStream[Row]]
@@ -1280,7 +1336,7 @@ class OptionsTableSink(
   override def getTableSchema: TableSchema = tableSchema
 
   override def getConsumedDataType: DataType = {
-    TableSchemaUtils.getPhysicalSchema(tableSchema).toRowDataType
+    getPhysicalSchema(tableSchema).toRowDataType
   }
 
   override def consumeDataSet(dataSet: DataSet[Row]): DataSink[_] = {

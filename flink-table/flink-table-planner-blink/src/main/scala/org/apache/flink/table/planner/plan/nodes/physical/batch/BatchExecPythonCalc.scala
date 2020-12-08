@@ -19,11 +19,10 @@
 package org.apache.flink.table.planner.plan.nodes.physical.batch
 
 import org.apache.flink.api.dag.Transformation
-import org.apache.flink.configuration.{ConfigOption, Configuration, MemorySize}
+import org.apache.flink.core.memory.ManagedMemoryUseCase
 import org.apache.flink.table.data.RowData
 import org.apache.flink.table.planner.delegation.BatchPlanner
 import org.apache.flink.table.planner.plan.nodes.common.CommonPythonCalc
-import org.apache.flink.table.planner.plan.nodes.exec.ExecNode
 
 import org.apache.calcite.plan.{RelOptCluster, RelTraitSet}
 import org.apache.calcite.rel.RelNode
@@ -61,20 +60,9 @@ class BatchExecPythonCalc(
       "BatchExecPythonCalc",
       getConfig(planner.getExecEnv, planner.getTableConfig))
 
-    ExecNode.setManagedMemoryWeight(
-      ret, getPythonWorkerMemory(planner.getTableConfig.getConfiguration))
-  }
-
-  private def getPythonWorkerMemory(config: Configuration): Long = {
-    val clazz = loadClass("org.apache.flink.python.PythonOptions")
-    val pythonFrameworkMemorySize = MemorySize.parse(
-      config.getString(
-        clazz.getField("PYTHON_FRAMEWORK_MEMORY_SIZE").get(null)
-          .asInstanceOf[ConfigOption[String]]))
-    val pythonBufferMemorySize = MemorySize.parse(
-      config.getString(
-        clazz.getField("PYTHON_DATA_BUFFER_MEMORY_SIZE").get(null)
-          .asInstanceOf[ConfigOption[String]]))
-    pythonFrameworkMemorySize.add(pythonBufferMemorySize).getBytes
+    if (isPythonWorkerUsingManagedMemory(planner.getTableConfig.getConfiguration)) {
+      ret.declareManagedMemoryUseCaseAtSlotScope(ManagedMemoryUseCase.PYTHON)
+    }
+    ret
   }
 }

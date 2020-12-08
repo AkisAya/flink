@@ -21,12 +21,12 @@ package org.apache.flink.table.runtime.stream.sql
 import org.apache.flink.api.common.typeinfo.{BasicTypeInfo, TypeInformation}
 import org.apache.flink.api.java.typeutils.RowTypeInfo
 import org.apache.flink.api.scala._
-import org.apache.flink.streaming.api.TimeCharacteristic
 import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks
 import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.watermark.Watermark
-import org.apache.flink.table.api.scala._
-import org.apache.flink.table.api.{EnvironmentSettings, Types}
+import org.apache.flink.table.api._
+import org.apache.flink.table.api.bridge.scala._
+import org.apache.flink.table.api.internal.TableEnvironmentInternal
 import org.apache.flink.table.descriptors.{Rowtime, Schema}
 import org.apache.flink.table.expressions.utils.Func15
 import org.apache.flink.table.runtime.stream.sql.SqlITCase.TimestampAndWatermarkWithOffset
@@ -73,7 +73,6 @@ class SqlITCase extends StreamingWithStateTestBase {
       (16L, 16, "Hello"))     // (3, Hello)       - window (not merged)
 
     val env = StreamExecutionEnvironment.getExecutionEnvironment
-    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
     env.setParallelism(1)
 
     val stream = env
@@ -113,7 +112,6 @@ class SqlITCase extends StreamingWithStateTestBase {
   def testDistinctAggOnRowTimeTumbleWindow(): Unit = {
     val settings = EnvironmentSettings.newInstance().useOldPlanner().build()
     val env = StreamExecutionEnvironment.getExecutionEnvironment
-    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
     val tEnv = StreamTableEnvironment.create(env, settings)
     env.setParallelism(1)
 
@@ -146,7 +144,6 @@ class SqlITCase extends StreamingWithStateTestBase {
   def testRowTimeTumbleWindow(): Unit = {
     val settings = EnvironmentSettings.newInstance().useOldPlanner().build()
     val env = StreamExecutionEnvironment.getExecutionEnvironment
-    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
     val tEnv = StreamTableEnvironment.create(env, settings)
     env.setParallelism(1)
 
@@ -701,7 +698,6 @@ class SqlITCase extends StreamingWithStateTestBase {
     val settings = EnvironmentSettings.newInstance().useOldPlanner().build()
     val env = StreamExecutionEnvironment.getExecutionEnvironment
     val tEnv = StreamTableEnvironment.create(env, settings)
-    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
     env.setStateBackend(getStateBackend)
     env.setParallelism(1)
 
@@ -751,7 +747,6 @@ class SqlITCase extends StreamingWithStateTestBase {
   def testWriteReadTableSourceSink(): Unit = {
     val settings = EnvironmentSettings.newInstance().useOldPlanner().build()
     val env = StreamExecutionEnvironment.getExecutionEnvironment
-    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
     val tEnv = StreamTableEnvironment.create(env, settings)
     MemoryTableSourceSinkUtil.clear()
 
@@ -769,9 +764,9 @@ class SqlITCase extends StreamingWithStateTestBase {
       .toTable(tEnv, 'a, 'b, 'c, 'rowtime.rowtime)
     tEnv.registerTable("sourceTable", t)
 
-    tEnv.registerTableSource("targetTable",
+    tEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal("targetTable",
       new InMemoryTableFactory(3).createStreamTableSource(properties))
-    tEnv.registerTableSink("targetTable",
+    tEnv.asInstanceOf[TableEnvironmentInternal].registerTableSinkInternal("targetTable",
       new InMemoryTableFactory(3).createStreamTableSink(properties))
 
     tEnv.sqlUpdate("INSERT INTO targetTable SELECT a, b, c, rowtime FROM sourceTable")

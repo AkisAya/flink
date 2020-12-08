@@ -24,6 +24,7 @@ import org.apache.flink.streaming.api.operators.StreamSink;
 import org.apache.flink.streaming.connectors.rabbitmq.common.RMQConnectionConfig;
 import org.apache.flink.streaming.util.AbstractStreamOperatorTestHarness;
 import org.apache.flink.streaming.util.MockSerializationSchema;
+import org.apache.flink.streaming.util.MockStreamingRuntimeContext;
 
 import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.AMQP.BasicProperties;
@@ -43,6 +44,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -98,6 +100,25 @@ public class RMQSinkTest {
 	}
 
 	@Test
+	public void testOverrideConnection() throws Exception {
+		final Connection mockConnection = mock(Connection.class);
+		Channel channel = mock(Channel.class);
+		when(mockConnection.createChannel()).thenReturn(channel);
+
+		RMQSink<String> rmqSink = new RMQSink<String>(rmqConnectionConfig, QUEUE_NAME, serializationSchema) {
+			@Override
+			protected Connection setupConnection() throws Exception {
+				return mockConnection;
+			}
+		};
+
+		rmqSink.setRuntimeContext(new MockStreamingRuntimeContext(false, 1, 0));
+		rmqSink.open(new Configuration());
+
+		verify(mockConnection, times(1)).createChannel();
+	}
+
+	@Test
 	public void throwExceptionIfChannelIsNull() throws Exception {
 		when(connection.createChannel()).thenReturn(null);
 		try {
@@ -122,6 +143,7 @@ public class RMQSinkTest {
 
 	private RMQSink<String> createRMQSink() throws Exception {
 		RMQSink<String> rmqSink = new RMQSink<>(rmqConnectionConfig, QUEUE_NAME, serializationSchema);
+		rmqSink.setRuntimeContext(new MockStreamingRuntimeContext(false, 1, 0));
 		rmqSink.open(new Configuration());
 		return rmqSink;
 	}
@@ -129,6 +151,7 @@ public class RMQSinkTest {
 	private RMQSink<String> createRMQSinkWithOptions(boolean mandatory, boolean immediate) throws Exception {
 		publishOptions = new DummyPublishOptions(mandatory, immediate);
 		RMQSink<String> rmqSink = new RMQSink<>(rmqConnectionConfig, serializationSchema, publishOptions);
+		rmqSink.setRuntimeContext(new MockStreamingRuntimeContext(false, 1, 0));
 		rmqSink.open(new Configuration());
 		return rmqSink;
 	}
@@ -137,6 +160,7 @@ public class RMQSinkTest {
 		publishOptions = new DummyPublishOptions(mandatory, immediate);
 		returnListener = new DummyReturnHandler();
 		RMQSink<String> rmqSink = new RMQSink<>(rmqConnectionConfig, serializationSchema, publishOptions, returnListener);
+		rmqSink.setRuntimeContext(new MockStreamingRuntimeContext(false, 1, 0));
 		rmqSink.open(new Configuration());
 		return rmqSink;
 	}
